@@ -72,30 +72,7 @@ class TTSPlayerService:
             os.remove(temp_path)
             return
 
-        self.log(guild_id, f"🎧 准备播放：{message}")
-        finished = asyncio.Event()
-
-        def after_play(error):
-            if error:
-                self.log(guild_id, f"❌ 播放回调报错：{error}")
-            else:
-                self.log(guild_id, "🎵 播放完成")
-            finished.set()
-
-        try:
-            self.current_voice_clients[guild_id] = vc
-            audio_source = discord.FFmpegPCMAudio(temp_path, executable=self.ffmpeg_path)
-            vc.play(audio_source, after=after_play)
-            await finished.wait()
-        except Exception as e:
-            self.log(guild_id, f"❌ 播放异常：{e}")
-        finally:
-            os.remove(temp_path)
-            self.current_voice_clients.pop(guild_id, None)
-
-        if self.queues[guild_id].empty() and vc.is_connected():
-            self.log(guild_id, "🔇 队列播放完毕，断开语音连接")
-            await vc.disconnect()
+        await self._play_audio_file(guild_id, vc, temp_path, message)
 
     async def _play_url(self, voice_channel: discord.VoiceChannel, audio_url: str):
         guild_id = voice_channel.guild.id
@@ -124,7 +101,10 @@ class TTSPlayerService:
             os.remove(temp_path)
             return
 
-        self.log(guild_id, f"🎧 准备播放 URL 音频")
+        await self._play_audio_file(guild_id, vc, temp_path, f"URL: {audio_url}")
+
+    async def _play_audio_file(self, guild_id: int, vc: discord.VoiceClient, temp_path: str, description: str):
+        self.log(guild_id, f"🎧 准备播放：{description}")
         finished = asyncio.Event()
 
         def after_play(error):
