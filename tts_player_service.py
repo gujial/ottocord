@@ -163,19 +163,42 @@ class TTSPlayerService:
         return await self._safe_connect(voice_channel, guild_id)
 
     async def _safe_connect(self, voice_channel: discord.VoiceChannel, guild_id: int, retries: int = 3, delay: float = 2.0):
+        existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
+
+        # ✅ 如果已连接到目标频道，直接复用
+        if existing_vc and existing_vc.is_connected() and existing_vc.channel.id == voice_channel.id:
+            self.log(guild_id, f"🔗 已连接到目标频道，复用连接")
+            return existing_vc
+
+        # ✅ 如果连接在其他频道，先断开
+        if existing_vc and existing_vc.is_connected():
+            self.log(guild_id, f"🔁 正在断开已有频道：{existing_vc.channel}")
+            await existing_vc.disconnect(force=True)
+
         for attempt in range(1, retries + 1):
             try:
                 self.log(guild_id, f"🔌 第 {attempt} 次尝试连接语音频道...")
                 vc = await asyncio.wait_for(voice_channel.connect(), timeout=10)
                 self.log(guild_id, "✅ 成功连接语音频道")
                 return vc
+
             except asyncio.TimeoutError:
                 self.log(guild_id, f"⏰ 第 {attempt} 次连接超时")
+
             except discord.ClientException as e:
-                self.log(guild_id, f"⚠️ 第 {attempt} 次连接失败：{e}")
+                msg = str(e)
+                self.log(guild_id, f"⚠️ 第 {attempt} 次连接失败：{msg}")
+
+                if "Already connected" in msg and attempt >= 2:
+                    # 第二次或之后，如果提示已连接，则复用现有连接
+                    existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
+                    if existing_vc and existing_vc.is_connected():
+                        self.log(guild_id, f"✅ 检测到已连接语音频道，尝试复用现有连接")
+                        return existing_vc
+
             await asyncio.sleep(delay)
 
-        self.log(guild_id, "❌ 多次尝试仍无法连接语音频道")
+        self.log(guild_id, "❌ 多次尝试仍无法连接语音频道，返回 None，跳过播放")
         return None
 
     async def _fetch_tts_audio(self, url: str, message: str):
