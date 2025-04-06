@@ -6,8 +6,9 @@ from tts_player_service import TTSPlayerService
 
 dotenv.load_dotenv()
 token = str(os.getenv("TOKEN"))
-intents = discord.Intents.default()
+speak_api_url = str(os.getenv("SPEAK_API_URL"))
 
+intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="/", intents=intents)
 tts_service = TTSPlayerService(bot)
 
@@ -25,7 +26,7 @@ async def say(ctx: discord.ApplicationContext, message: str):
     await tts_service.join_and_speak(
         ctx.author.voice.channel,
         message,
-        "http://192.168.2.243:8080/speak"
+        speak_api_url
     )
 
 bot.run(token)
