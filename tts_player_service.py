@@ -19,25 +19,36 @@ class TTSPlayerService:
         now = datetime.datetime.now().strftime("%H:%M:%S")
         print(f"[{now}] [GUILD {guild_id}] {message}")
 
+    async def _add_queue(self, guild_id, message):
+        self.log(guild_id, f"✅ 加入播放队列：{message}")
+
+        try:
+            if guild_id not in self.playing_tasks or self.playing_tasks[guild_id].done():
+                task = asyncio.create_task(self._player_loop(guild_id))
+                await task
+                self.playing_tasks[guild_id] = task
+        except Exception as e:
+            raise e
+
     async def join_and_speak(self, voice_channel: discord.VoiceChannel, message: str, speak_api_url: str):
         guild_id = voice_channel.guild.id
         queue = self.queues[guild_id]
 
         await queue.put((voice_channel, message, speak_api_url))
-        self.log(guild_id, f"✅ 加入播放队列：{message}")
-
-        if guild_id not in self.playing_tasks or self.playing_tasks[guild_id].done():
-            self.playing_tasks[guild_id] = asyncio.create_task(self._player_loop(guild_id))
+        try:
+            await self._add_queue(guild_id, message)
+        except Exception as e:
+            raise e
 
     async def join_and_play_url(self, voice_channel: discord.VoiceChannel, audio_url: str):
         guild_id = voice_channel.guild.id
         queue = self.queues[guild_id]
 
         await queue.put((voice_channel, audio_url, None))  # None 表示是 URL 播放
-        self.log(guild_id, f"✅ 加入播放队列（URL）：{audio_url}")
-
-        if guild_id not in self.playing_tasks or self.playing_tasks[guild_id].done():
-            self.playing_tasks[guild_id] = asyncio.create_task(self._player_loop(guild_id))
+        try:
+            await self._add_queue(guild_id, audio_url)
+        except Exception as e:
+            raise e
 
     async def _player_loop(self, guild_id: int):
         queue = self.queues[guild_id]
@@ -51,6 +62,7 @@ class TTSPlayerService:
                     await self._play_url(voice_channel, content)
             except Exception as e:
                 self.log(guild_id, f"❌ 播放失败：{e}")
+                raise e
 
     async def _play_once(self, voice_channel: discord.VoiceChannel, message: str, speak_api_url: str):
         guild_id = voice_channel.guild.id
@@ -59,7 +71,7 @@ class TTSPlayerService:
         audio_data = await self._fetch_tts_audio(speak_api_url, message)
         if audio_data is None:
             self.log(guild_id, "❌ 获取语音数据失败，跳过播放")
-            return
+            raise Exception("❌ 获取语音数据失败，跳过播放")
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
             tmp_file.write(audio_data)
@@ -84,11 +96,11 @@ class TTSPlayerService:
                 async with session.get(audio_url) as resp:
                     if resp.status != 200:
                         self.log(guild_id, f"❌ 下载失败：HTTP {resp.status}")
-                        return
+                        raise Exception(f"HTTP {resp.status}")
                     audio_data = await resp.read()
         except Exception as e:
             self.log(guild_id, f"❌ 下载音频异常：{e}")
-            return
+            raise e
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
             tmp_file.write(audio_data)
@@ -178,8 +190,8 @@ class TTSPlayerService:
 
             await asyncio.sleep(delay)
 
-        self.log(guild_id, "❌ 多次尝试仍无法连接语音频道，返回 None，跳过播放")
-        return None
+        self.log(guild_id, "❌ 多次尝试仍无法连接语音频道，跳过播放")
+        raise Exception("❌ 多次尝试仍无法连接语音频道，跳过播放")
 
     async def _fetch_tts_audio(self, url: str, message: str):
         try:
@@ -190,10 +202,10 @@ class TTSPlayerService:
                         return await resp.read()
                     else:
                         self.log(0, f"❌ TTS 接口响应错误: {resp.status}")
-                        return None
+                        raise Exception(f"❌ TTS 接口响应错误: {resp.status}")
         except Exception as e:
             self.log(0, f"❌ TTS 请求异常：{e}")
-            return None
+            raise e
 
     async def skip(self, guild_id: int):
         vc = self.current_voice_clients.get(guild_id)
@@ -202,3 +214,4 @@ class TTSPlayerService:
             self.log(guild_id, "⏭️ 手动跳过当前播放")
         else:
             self.log(guild_id, "⚠️ 当前没有播放中的音频")
+            raise Exception("当前没有播放中的音频")
