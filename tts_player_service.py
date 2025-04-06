@@ -15,7 +15,8 @@ class TTSPlayerService:
         self.playing_tasks: dict[int, asyncio.Task] = {}
         self.current_voice_clients: dict[int, discord.VoiceClient] = {}
 
-    def log(self, guild_id: int, message: str):
+    @staticmethod
+    def log(guild_id: int, message: str):
         now = datetime.datetime.now().strftime("%H:%M:%S")
         print(f"[{now}] [GUILD {guild_id}] {message}")
 
