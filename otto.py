@@ -9,14 +9,17 @@ token = str(os.getenv("TOKEN"))
 speak_api_url = str(os.getenv("SPEAK_API_URL"))
 
 intents = discord.Intents.default()
+intents.voice_states = True
+intents.guilds = True
+
 bot = commands.Bot(command_prefix="/", intents=intents)
 tts_service = TTSPlayerService(bot)
 
 @bot.event
 async def on_ready():
-    print(f"登录成功，机器人名字是 {bot.user}")
+    print(f"✅ 登录成功，机器人名字是 {bot.user}")
 
-@bot.slash_command(name="say", description="播放语音")
+@bot.slash_command(name="say", description="播放语音（通过 TTS）")
 async def say(ctx: discord.ApplicationContext, message: str):
     if not ctx.author.voice or not ctx.author.voice.channel:
         await ctx.respond("请先加入一个语音频道。", ephemeral=True)
@@ -28,5 +31,26 @@ async def say(ctx: discord.ApplicationContext, message: str):
         message,
         speak_api_url
     )
+
+@bot.slash_command(name="play_url", description="播放在线音频（mp3/wav 等）")
+async def play_url(ctx: discord.ApplicationContext, url: str):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.respond("请先加入一个语音频道。", ephemeral=True)
+        return
+
+    await ctx.respond(f"🎧 准备播放音频：{url}")
+    await tts_service.join_and_play_url(
+        ctx.author.voice.channel,
+        url
+    )
+
+@bot.slash_command(name="skip", description="跳过当前播放的音频")
+async def skip(ctx: discord.ApplicationContext):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.respond("请先加入一个语音频道。", ephemeral=True)
+        return
+
+    await tts_service.skip(ctx.guild.id)
+    await ctx.respond("⏭️ 已尝试跳过当前播放", ephemeral=True)
 
 bot.run(token)

@@ -13,6 +13,7 @@ class TTSPlayerService:
         self.ffmpeg_path = ffmpeg_path
         self.queues: dict[int, asyncio.Queue] = defaultdict(asyncio.Queue)
         self.playing_tasks: dict[int, asyncio.Task] = {}
+        self.current_voice_clients: dict[int, discord.VoiceClient] = {}
 
     def log(self, guild_id: int, message: str):
         now = datetime.datetime.now().strftime("%H:%M:%S")
@@ -28,13 +29,26 @@ class TTSPlayerService:
         if guild_id not in self.playing_tasks or self.playing_tasks[guild_id].done():
             self.playing_tasks[guild_id] = asyncio.create_task(self._player_loop(guild_id))
 
+    async def join_and_play_url(self, voice_channel: discord.VoiceChannel, audio_url: str):
+        guild_id = voice_channel.guild.id
+        queue = self.queues[guild_id]
+
+        await queue.put((voice_channel, audio_url, None))  # None 表示是 URL 播放
+        self.log(guild_id, f"✅ 加入播放队列（URL）：{audio_url}")
+
+        if guild_id not in self.playing_tasks or self.playing_tasks[guild_id].done():
+            self.playing_tasks[guild_id] = asyncio.create_task(self._player_loop(guild_id))
+
     async def _player_loop(self, guild_id: int):
         queue = self.queues[guild_id]
 
         while not queue.empty():
-            voice_channel, message, speak_api_url = await queue.get()
+            voice_channel, content, speak_api_url = await queue.get()
             try:
-                await self._play_once(voice_channel, message, speak_api_url)
+                if speak_api_url:  # TTS
+                    await self._play_once(voice_channel, content, speak_api_url)
+                else:  # URL
+                    await self._play_url(voice_channel, content)
             except Exception as e:
                 self.log(guild_id, f"❌ 播放失败：{e}")
 
@@ -53,25 +67,11 @@ class TTSPlayerService:
 
         self.log(guild_id, f"📁 写入临时文件完成：{temp_path}")
 
-        # 尝试复用连接
-        vc: discord.VoiceClient = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
-
-        if vc and vc.is_connected():
-            if vc.channel.id == voice_channel.id:
-                self.log(guild_id, f"🔗 已在目标语音频道，直接播放")
-            else:
-                self.log(guild_id, f"🔁 已连接到其他语音频道（{vc.channel}），准备切换")
-                await vc.disconnect(force=True)
-                vc = await self._safe_connect(voice_channel, guild_id)
-        else:
-            vc = await self._safe_connect(voice_channel, guild_id)
-
+        vc = await self._prepare_voice_client(voice_channel, guild_id)
         if vc is None:
-            self.log(guild_id, "❌ 多次尝试仍无法连接语音频道，跳过播放")
             os.remove(temp_path)
             return
 
-        # 播放音频
         self.log(guild_id, f"🎧 准备播放：{message}")
         finished = asyncio.Event()
 
@@ -83,6 +83,7 @@ class TTSPlayerService:
             finished.set()
 
         try:
+            self.current_voice_clients[guild_id] = vc
             audio_source = discord.FFmpegPCMAudio(temp_path, executable=self.ffmpeg_path)
             vc.play(audio_source, after=after_play)
             await finished.wait()
@@ -90,28 +91,78 @@ class TTSPlayerService:
             self.log(guild_id, f"❌ 播放异常：{e}")
         finally:
             os.remove(temp_path)
+            self.current_voice_clients.pop(guild_id, None)
 
-        # 如果播放队列为空，自动断开连接
         if self.queues[guild_id].empty() and vc.is_connected():
             self.log(guild_id, "🔇 队列播放完毕，断开语音连接")
             await vc.disconnect()
 
-    async def _safe_connect(self, voice_channel: discord.VoiceChannel, guild_id: int, retries: int = 3,
-                            delay: float = 2.0):
-        existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
+    async def _play_url(self, voice_channel: discord.VoiceChannel, audio_url: str):
+        guild_id = voice_channel.guild.id
+        self.log(guild_id, f"🌐 请求音频下载：{audio_url}")
 
-        # ✅ 如果已连接到目标频道，复用
-        if existing_vc and existing_vc.is_connected() and existing_vc.channel.id == voice_channel.id:
-            self.log(guild_id, f"🔗 已连接到目标频道，复用连接")
-            return existing_vc
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(audio_url) as resp:
+                    if resp.status != 200:
+                        self.log(guild_id, f"❌ 下载失败：HTTP {resp.status}")
+                        return
+                    audio_data = await resp.read()
+        except Exception as e:
+            self.log(guild_id, f"❌ 下载音频异常：{e}")
+            return
 
-        # ✅ 如果连接在其他频道，先断开
-        if existing_vc and existing_vc.is_connected():
-            self.log(guild_id, f"🔁 正在断开已有频道：{existing_vc.channel}")
-            await existing_vc.disconnect(force=True)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+            tmp_file.write(audio_data)
+            temp_path = tmp_file.name
 
-        timed_out_once = False
+        self.log(guild_id, f"📁 写入临时文件完成：{temp_path}")
 
+        vc = await self._prepare_voice_client(voice_channel, guild_id)
+        if vc is None:
+            os.remove(temp_path)
+            return
+
+        self.log(guild_id, f"🎧 准备播放 URL 音频")
+        finished = asyncio.Event()
+
+        def after_play(error):
+            if error:
+                self.log(guild_id, f"❌ 播放回调报错：{error}")
+            else:
+                self.log(guild_id, "🎵 播放完成")
+            finished.set()
+
+        try:
+            self.current_voice_clients[guild_id] = vc
+            audio_source = discord.FFmpegPCMAudio(temp_path, executable=self.ffmpeg_path)
+            vc.play(audio_source, after=after_play)
+            await finished.wait()
+        except Exception as e:
+            self.log(guild_id, f"❌ 播放异常：{e}")
+        finally:
+            os.remove(temp_path)
+            self.current_voice_clients.pop(guild_id, None)
+
+        if self.queues[guild_id].empty() and vc.is_connected():
+            self.log(guild_id, "🔇 队列播放完毕，断开语音连接")
+            await vc.disconnect()
+
+    async def _prepare_voice_client(self, voice_channel: discord.VoiceChannel, guild_id: int):
+        vc: discord.VoiceClient = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
+
+        if vc and vc.is_connected():
+            if vc.channel.id == voice_channel.id:
+                self.log(guild_id, f"🔗 已在目标语音频道，直接播放")
+                return vc
+            else:
+                self.log(guild_id, f"🔁 已连接到其他语音频道（{vc.channel}），准备切换")
+                await vc.disconnect(force=True)
+
+        return await self._safe_connect(voice_channel, guild_id)
+
+    async def _safe_connect(self, voice_channel: discord.VoiceChannel, guild_id: int, retries: int = 3, delay: float = 2.0):
         for attempt in range(1, retries + 1):
             try:
                 self.log(guild_id, f"🔌 第 {attempt} 次尝试连接语音频道...")
@@ -119,17 +170,12 @@ class TTSPlayerService:
                 self.log(guild_id, "✅ 成功连接语音频道")
                 return vc
             except asyncio.TimeoutError:
-                timed_out_once = True
                 self.log(guild_id, f"⏰ 第 {attempt} 次连接超时")
             except discord.ClientException as e:
-                if "Already connected" in str(e) and timed_out_once:
-                    self.log(guild_id, f"⚠️ 第 {attempt} 次连接失败但检测到已连接，尝试复用连接")
-                    existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
-                    if existing_vc and existing_vc.is_connected():
-                        return existing_vc
                 self.log(guild_id, f"⚠️ 第 {attempt} 次连接失败：{e}")
             await asyncio.sleep(delay)
 
+        self.log(guild_id, "❌ 多次尝试仍无法连接语音频道")
         return None
 
     async def _fetch_tts_audio(self, url: str, message: str):
@@ -145,3 +191,11 @@ class TTSPlayerService:
         except Exception as e:
             self.log(0, f"❌ TTS 请求异常：{e}")
             return None
+
+    async def skip(self, guild_id: int):
+        vc = self.current_voice_clients.get(guild_id)
+        if vc and vc.is_playing():
+            vc.stop()
+            self.log(guild_id, "⏭️ 手动跳过当前播放")
+        else:
+            self.log(guild_id, "⚠️ 当前没有播放中的音频")
