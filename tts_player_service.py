@@ -7,6 +7,9 @@ import datetime
 from collections import defaultdict
 
 
+async def _send_error_to_voice_channel(error_message: str, ctx: discord.ApplicationContext):
+    await ctx.respond(error_message, ephemeral=True)
+
 class TTSPlayerService:
     def __init__(self, bot: discord.Bot, ffmpeg_path="ffmpeg"):
         self.bot = bot
@@ -20,52 +23,48 @@ class TTSPlayerService:
         now = datetime.datetime.now().strftime("%H:%M:%S")
         print(f"[{now}] [GUILD {guild_id}] {message}")
 
-    async def _add_queue(self, guild_id, message):
+    async def _add_queue(self, guild_id, message, ctx):
         self.log(guild_id, f"✅ 加入播放队列：{message}")
 
-        try:
-            if guild_id not in self.playing_tasks or self.playing_tasks[guild_id].done():
-                task = asyncio.create_task(self._player_loop(guild_id))
-                await task
-                self.playing_tasks[guild_id] = task
-        except Exception as e:
-            raise e
+        if guild_id not in self.playing_tasks or self.playing_tasks[guild_id].done():
+            task = asyncio.create_task(self._player_loop(guild_id, ctx))
+            self.playing_tasks[guild_id] = task
 
-    async def join_and_speak(self, voice_channel: discord.VoiceChannel, message: str, speak_api_url: str):
+    async def join_and_speak(self, voice_channel: discord.VoiceChannel, message: str, speak_api_url: str, ctx: discord.ApplicationContext):
         guild_id = voice_channel.guild.id
         queue = self.queues[guild_id]
 
         await queue.put((voice_channel, message, speak_api_url))
         try:
-            await self._add_queue(guild_id, message)
+            await self._add_queue(guild_id, message, ctx)
         except Exception as e:
-            raise e
+            await _send_error_to_voice_channel(f"❌ 播放语音时发生错误: {str(e)}", ctx)
 
-    async def join_and_play_url(self, voice_channel: discord.VoiceChannel, audio_url: str):
+    async def join_and_play_url(self, voice_channel: discord.VoiceChannel, audio_url: str, ctx: discord.ApplicationContext):
         guild_id = voice_channel.guild.id
         queue = self.queues[guild_id]
 
         await queue.put((voice_channel, audio_url, None))  # None 表示是 URL 播放
         try:
-            await self._add_queue(guild_id, audio_url)
+            await self._add_queue(guild_id, audio_url, ctx)
         except Exception as e:
-            raise e
+            await _send_error_to_voice_channel(f"❌ 播放 URL 时发生错误: {str(e)}", ctx)
 
-    async def _player_loop(self, guild_id: int):
+    async def _player_loop(self, guild_id: int, ctx: discord.ApplicationContext):
         queue = self.queues[guild_id]
 
         while not queue.empty():
             voice_channel, content, speak_api_url = await queue.get()
             try:
                 if speak_api_url:  # TTS
-                    await self._play_once(voice_channel, content, speak_api_url)
+                    await self._play_once(voice_channel, content, speak_api_url, ctx)
                 else:  # URL
-                    await self._play_url(voice_channel, content)
+                    await self._play_url(voice_channel, content, ctx)
             except Exception as e:
                 self.log(guild_id, f"❌ 播放失败：{e}")
-                raise e
+                await _send_error_to_voice_channel(f"❌ 播放时发生错误: {str(e)}", ctx)
 
-    async def _play_once(self, voice_channel: discord.VoiceChannel, message: str, speak_api_url: str):
+    async def _play_once(self, voice_channel: discord.VoiceChannel, message: str, speak_api_url: str, ctx: discord.ApplicationContext):
         guild_id = voice_channel.guild.id
         self.log(guild_id, "🌐 请求语音合成")
 
@@ -85,9 +84,9 @@ class TTSPlayerService:
             os.remove(temp_path)
             return
 
-        await self._play_audio_file(guild_id, vc, temp_path, message)
+        await self._play_audio_file(guild_id, vc, temp_path, message, ctx)
 
-    async def _play_url(self, voice_channel: discord.VoiceChannel, audio_url: str):
+    async def _play_url(self, voice_channel: discord.VoiceChannel, audio_url: str, ctx: discord.ApplicationContext):
         guild_id = voice_channel.guild.id
         self.log(guild_id, f"🌐 请求音频下载：{audio_url}")
 
@@ -96,11 +95,13 @@ class TTSPlayerService:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(audio_url) as resp:
                     if resp.status != 200:
-                        self.log(guild_id, f"❌ 下载失败：HTTP {resp.status}")
+                        error_message = f"❌ 下载失败：HTTP {resp.status}"
+                        self.log(guild_id, error_message)
                         raise Exception(f"HTTP {resp.status}")
                     audio_data = await resp.read()
         except Exception as e:
-            self.log(guild_id, f"❌ 下载音频异常：{e}")
+            error_message = f"❌ 下载音频时发生错误: {str(e)}"
+            self.log(guild_id, error_message)
             raise e
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
@@ -114,9 +115,9 @@ class TTSPlayerService:
             os.remove(temp_path)
             return
 
-        await self._play_audio_file(guild_id, vc, temp_path, f"URL: {audio_url}")
+        await self._play_audio_file(guild_id, vc, temp_path, f"URL: {audio_url}", ctx)
 
-    async def _play_audio_file(self, guild_id: int, vc: discord.VoiceClient, temp_path: str, description: str):
+    async def _play_audio_file(self, guild_id: int, vc: discord.VoiceClient, temp_path: str, description: str, ctx: discord.ApplicationContext):
         self.log(guild_id, f"🎧 准备播放：{description}")
         finished = asyncio.Event()
 
@@ -125,17 +126,34 @@ class TTSPlayerService:
                 self.log(guild_id, f"❌ 播放回调报错：{error}")
             else:
                 self.log(guild_id, "🎵 播放完成")
-            finished.set()
+
+            # 线程安全地设置事件
+            self.bot.loop.call_soon_threadsafe(finished.set)
 
         try:
             self.current_voice_clients[guild_id] = vc
+
+            # 如果正在播放，等待其完成
+            if vc.is_playing():
+                self.log(guild_id, f"⏳ 正在等待当前音频播放结束...")
+                wait_event = asyncio.Event()
+
+                def temp_after():
+                    wait_event.set()
+
+                vc._player.after = temp_after
+                await wait_event.wait()
+
             audio_source = discord.FFmpegPCMAudio(temp_path, executable=self.ffmpeg_path)
             vc.play(audio_source, after=after_play)
             await finished.wait()
+
         except Exception as e:
             self.log(guild_id, f"❌ 播放异常：{e}")
+            await _send_error_to_voice_channel(f"❌ 播放异常：{e}", ctx)
         finally:
-            os.remove(temp_path)
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
             self.current_voice_clients.pop(guild_id, None)
 
         if self.queues[guild_id].empty() and vc.is_connected():
@@ -208,7 +226,7 @@ class TTSPlayerService:
             self.log(0, f"❌ TTS 请求异常：{e}")
             raise e
 
-    async def skip(self, guild_id: int):
+    async def skip(self, guild_id: int, ctx: discord.ApplicationContext):
         vc = self.current_voice_clients.get(guild_id)
         if vc and vc.is_playing():
             vc.stop()

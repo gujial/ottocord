@@ -30,7 +30,8 @@ async def say(ctx: discord.ApplicationContext, message: str):
         await tts_service.join_and_speak(
             ctx.author.voice.channel,
             message,
-            speak_api_url
+            speak_api_url,
+            ctx
         )
     except Exception as e:
         await ctx.respond(f"❌ 出现错误：{e}", ephemeral=True)
@@ -45,7 +46,8 @@ async def play_url(ctx: discord.ApplicationContext, url: str):
         await ctx.respond(f"🎧 准备播放音频：{url}")
         await tts_service.join_and_play_url(
             ctx.author.voice.channel,
-            url
+            url,
+            ctx
         )
     except Exception as e:
         await ctx.respond(f"❌ 出现错误：{e}", ephemeral=True)
@@ -57,8 +59,8 @@ async def skip(ctx: discord.ApplicationContext):
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
             return
 
-        await tts_service.skip(ctx.guild.id)
-        await ctx.respond("⏭️ 已尝试跳过当前播放", ephemeral=True)
+        await tts_service.skip(ctx.guild.id, ctx)
+        await ctx.respond("⏭️ 已尝试跳过当前播放")
     except Exception as e:
         await ctx.respond(f"❌ 跳过失败：{e}", ephemeral=True)
 
