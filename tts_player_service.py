@@ -199,14 +199,13 @@ class TTSPlayerService:
             except discord.ClientException as e:
                 msg = str(e)
                 self.log(guild_id, f"⚠️ 第 {attempt} 次连接失败：{msg}")
-                if "Already connected to a voice channel" in msg:
-                    existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
-                    if existing_vc:
-                        self.log(guild_id, f"⚠️ 检测到连接残留，尝试强制断开")
-                        try:
-                            await existing_vc.disconnect(force=True)
-                        except Exception as disconnect_err:
-                            self.log(guild_id, f"⚠️ 强制断开失败：{disconnect_err}")
+                existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
+                if existing_vc:
+                    self.log(guild_id, f"⚠️ 检测到连接残留，尝试强制断开")
+                    try:
+                        await existing_vc.disconnect(force=True)
+                    except Exception as disconnect_err:
+                        self.log(guild_id, f"⚠️ 强制断开失败：{disconnect_err}")
 
             await asyncio.sleep(delay)
 
