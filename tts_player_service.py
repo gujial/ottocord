@@ -200,8 +200,7 @@ class TTSPlayerService:
                 msg = str(e)
                 self.log(guild_id, f"⚠️ 第 {attempt} 次连接失败：{msg}")
 
-                if "Already connected to a voice channel" in msg and attempt >= 2:
-                    # 第二次或之后，如果提示已连接，则复用现有连接
+                if "Already connected to a voice channel" in msg:
                     existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
                     if existing_vc:
                         self.log(guild_id, f"✅ 检测到已连接语音频道，尝试复用现有连接")
