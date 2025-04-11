@@ -50,16 +50,29 @@ class TTSPlayerService:
         except Exception as e:
             await _send_error_to_voice_channel(f"❌ 播放 URL 时发生错误: {str(e)}", ctx)
 
+    async def join_and_stream_url(self, voice_channel: discord.VoiceChannel, stream_url: str, ctx: discord.ApplicationContext):
+        guild_id = voice_channel.guild.id
+        queue = self.queues[guild_id]
+
+        await queue.put((voice_channel, f"stream:{stream_url}", None))  # 使用特殊前缀标记为流式播放
+        try:
+            await self._add_queue(guild_id, f"[流式播放] {stream_url}", ctx)
+        except Exception as e:
+            await _send_error_to_voice_channel(f"❌ 流式播放时发生错误: {str(e)}", ctx)
+
     async def _player_loop(self, guild_id: int, ctx: discord.ApplicationContext):
         queue = self.queues[guild_id]
 
         while not queue.empty():
             voice_channel, content, speak_api_url = await queue.get()
             try:
-                if speak_api_url:  # TTS
+                if speak_api_url:  # TTS 播放
                     await self._play_once(voice_channel, content, speak_api_url, ctx)
-                else:  # URL
+                elif content.startswith("stream:"):  # 流式播放 URL
+                    await self._stream_url(voice_channel, content.replace("stream:", "", 1), ctx)
+                else:  # 默认行为：先下载再播放
                     await self._play_url(voice_channel, content, ctx)
+
             except Exception as e:
                 self.log(guild_id, f"❌ 播放失败：{e}")
                 await _send_error_to_voice_channel(f"❌ 播放时发生错误: {str(e)}", ctx)
@@ -116,6 +129,49 @@ class TTSPlayerService:
             return
 
         await self._play_audio_file(guild_id, vc, temp_path, f"URL: {audio_url}", ctx)
+
+    async def _stream_url(self, voice_channel: discord.VoiceChannel, audio_url: str, ctx: discord.ApplicationContext):
+        guild_id = voice_channel.guild.id
+        self.log(guild_id, f"📡 正在流式播放：{audio_url}")
+
+        vc = await self._prepare_voice_client(voice_channel, guild_id)
+        if vc is None:
+            await _send_error_to_voice_channel("❌ 无法连接语音频道", ctx)
+            return
+
+        finished = asyncio.Event()
+
+        def after_play(error):
+            if error:
+                self.log(guild_id, f"❌ 流式播放回调错误：{error}")
+            else:
+                self.log(guild_id, "🎵 流式播放完成")
+            self.bot.loop.call_soon_threadsafe(finished.set)
+
+        try:
+            self.current_voice_clients[guild_id] = vc
+
+            if vc.is_playing():
+                self.log(guild_id, "⏳ 等待当前播放完成")
+                wait_event = asyncio.Event()
+                def temp_after(): wait_event.set()
+                vc._player.after = temp_after
+                await wait_event.wait()
+
+            audio_source = discord.FFmpegPCMAudio(audio_url, executable=self.ffmpeg_path)
+            vc.play(audio_source, after=after_play)
+            await finished.wait()
+
+        except Exception as e:
+            self.log(guild_id, f"❌ 流式播放异常：{e}")
+            await _send_error_to_voice_channel(f"❌ 流式播放异常：{e}", ctx)
+        finally:
+            self.current_voice_clients.pop(guild_id, None)
+
+        if self.queues[guild_id].empty() and vc.is_connected():
+            self.log(guild_id, "🔇 队列播放完毕，断开语音连接")
+            await vc.disconnect()
+
 
     async def _play_audio_file(self, guild_id: int, vc: discord.VoiceClient, temp_path: str, description: str, ctx: discord.ApplicationContext):
         self.log(guild_id, f"🎧 准备播放：{description}")

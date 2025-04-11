@@ -64,4 +64,20 @@ async def skip(ctx: discord.ApplicationContext):
     except Exception as e:
         await ctx.respond(f"❌ 跳过失败：{e}", ephemeral=True)
 
+@bot.slash_command(name="stream_url", description="播放流式音频（直播/广播）")
+async def stream_url(ctx: discord.ApplicationContext, url: str):
+    try:
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
+            return
+
+        await ctx.respond(f"📡 正在流式播放：{url}")
+        await tts_service.join_and_stream_url(
+            ctx.author.voice.channel,
+            url,
+            ctx
+        )
+    except Exception as e:
+        await ctx.respond(f"❌ 出现错误：{e}", ephemeral=True)
+
 bot.run(token)
