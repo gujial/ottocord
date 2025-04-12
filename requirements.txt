@@ -2,4 +2,4 @@ py-cord
 audioop-lts
 dotenv
 PyNaCl
-bilibili_api
+bilibili-api-python
