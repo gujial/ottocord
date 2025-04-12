@@ -78,8 +78,11 @@ class TTSPlayerService:
         embed.set_thumbnail(url=info["pic"])
         embed.add_field(name="发布时间", value=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(info["pubdate"])), inline=False)
         embed.add_field(name="播放量", value=info["stat"]["view"], inline=True)
+        embed.add_field(name="点赞数", value=info["stat"]["like"], inline=True)
         embed.add_field(name="投币数", value=info["stat"]["coin"], inline=True)
         embed.add_field(name="收藏数", value=info["stat"]["favorite"], inline=True)
+        embed.add_field(name="弹幕数", value=info["stat"]["danmaku"], inline=True)
+        embed.add_field(name="分享数", value=info["stat"]["share"], inline=True)
         embed.set_author(name=info["owner"]["name"], icon_url=info["owner"]["face"])
         otto_respond = "接下来播放："+info["title"]
 
