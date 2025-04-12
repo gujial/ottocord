@@ -9,6 +9,8 @@ import datetime
 from bilibili_api import video, Credential
 from collections import defaultdict
 
+from discord.ui import View, Button
+
 
 async def _send_error_to_voice_channel(error_message: str, ctx: discord.ApplicationContext):
     await ctx.respond(error_message, ephemeral=True)
@@ -80,7 +82,17 @@ class TTSPlayerService:
         embed.add_field(name="收藏数", value=info["stat"]["favorite"], inline=True)
         embed.set_author(name=info["owner"]["name"], icon_url=info["owner"]["face"])
         otto_respond = "接下来播放："+info["title"]
-        await ctx.respond(otto_respond, embed=embed)
+
+        button = Button(
+            label="📺 观看视频",
+            url=f"https://www.bilibili.com/video/{bvid}/?p={page}",
+            style=discord.ButtonStyle.link
+        )
+
+        view = View()
+        view.add_item(button)
+
+        await ctx.respond(otto_respond, embed=embed, view=view)
 
         if audio_url is None:
             raise Exception("无法解析该视频的音频流")
