@@ -84,6 +84,7 @@ class TTSPlayerService:
         embed.add_field(name="弹幕数", value=info["stat"]["danmaku"], inline=True)
         embed.add_field(name="分享数", value=info["stat"]["share"], inline=True)
         embed.set_author(name=info["owner"]["name"], icon_url=info["owner"]["face"])
+        embed.set_footer(text=f"BV号：{bvid}")
         otto_respond = "接下来播放："+info["title"]
 
         button = Button(
