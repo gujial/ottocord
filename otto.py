@@ -105,7 +105,7 @@ async def stream_url(
 async def play_bilibili(
         ctx: discord.ApplicationContext,
         bvid: Option(str, description="BV号"),
-        page: Option(int, description="分P号") = 0
+        page: Option(int, description="分P号") = 1
 ):
     try:
         if not ctx.author.voice or not ctx.author.voice.channel:
