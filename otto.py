@@ -32,7 +32,10 @@ async def on_ready():
     print(f"✅ 登录成功，机器人名字是 {bot.user}")
 
 @bot.slash_command(name="say", description="播放语音（通过 TTS）")
-async def say(ctx: discord.ApplicationContext, message: str):
+async def say(
+        ctx: discord.ApplicationContext,
+        message: Option(str, description="需要棍哥朗诵的内容")
+):
     try:
         if not ctx.author.voice or not ctx.author.voice.channel:
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
@@ -49,7 +52,10 @@ async def say(ctx: discord.ApplicationContext, message: str):
         await ctx.respond(f"❌ 出现错误：{e}", ephemeral=True)
 
 @bot.slash_command(name="play_url", description="播放在线音频（mp3/wav 等）")
-async def play_url(ctx: discord.ApplicationContext, url: str):
+async def play_url(
+        ctx: discord.ApplicationContext,
+        url: Option(str, "音频文件url")
+):
     try:
         if not ctx.author.voice or not ctx.author.voice.channel:
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
@@ -77,7 +83,10 @@ async def skip(ctx: discord.ApplicationContext):
         await ctx.respond(f"❌ 跳过失败：{e}", ephemeral=True)
 
 @bot.slash_command(name="stream_url", description="播放流式音频（直播/广播）")
-async def stream_url(ctx: discord.ApplicationContext, url: str):
+async def stream_url(
+        ctx: discord.ApplicationContext,
+        url: Option(str, "流式音频url")
+):
     try:
         if not ctx.author.voice or not ctx.author.voice.channel:
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
@@ -93,7 +102,11 @@ async def stream_url(ctx: discord.ApplicationContext, url: str):
         await ctx.respond(f"❌ 出现错误：{e}", ephemeral=True)
 
 @bot.slash_command(name="play_bilibili", description="解析播放bilibili视频的音频")
-async def play_bilibili(ctx: discord.ApplicationContext, bvid:str, page:int=0):
+async def play_bilibili(
+        ctx: discord.ApplicationContext,
+        bvid: Option(str, description="BV号"),
+        page: Option(int, description="分P号") = 0
+):
     try:
         if not ctx.author.voice or not ctx.author.voice.channel:
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
@@ -112,8 +125,8 @@ async def play_bilibili(ctx: discord.ApplicationContext, bvid:str, page:int=0):
 async def search_bilibili(
         ctx: discord.ApplicationContext,
         keywords: str,
-        page: int = 1,
-        original_message: discord.Message = None
+        page: Option(int, "页码", min_value=1, default=1) = 1,
+        original_message: Option(discord.Message, "原始消息，一般指向搜索结果") = None
 ):
     try:
         if not ctx.author.voice or not ctx.author.voice.channel:
