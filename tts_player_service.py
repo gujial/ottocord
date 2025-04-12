@@ -1,9 +1,12 @@
+import time
+
 import discord
 import aiohttp
 import asyncio
 import tempfile
 import os
 import datetime
+from bilibili_api import video
 from collections import defaultdict
 
 
@@ -59,6 +62,29 @@ class TTSPlayerService:
             await self._add_queue(guild_id, f"[流式播放] {stream_url}", ctx)
         except Exception as e:
             await _send_error_to_voice_channel(f"❌ 流式播放时发生错误: {str(e)}", ctx)
+
+    async def join_and_play_bilibili(self, voice_channel: discord.VoiceChannel, bvid: str, ctx: discord.ApplicationContext, page=0):
+        v = video.Video(bvid=bvid)
+        download_url = await v.get_download_url(page)
+        d = video.VideoDownloadURLDataDetecter(download_url)
+        info = await v.get_info()
+        a = d.detect_best_streams()
+        audio_url = a[1].url
+
+        embed = discord.Embed(title=info["title"], description=info["desc"])
+        embed.set_thumbnail(url=info["pic"])
+        embed.add_field(name="发布时间", value=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(info["pubdate"])), inline=False)
+        embed.add_field(name="播放量", value=info["stat"]["view"], inline=True)
+        embed.add_field(name="投币数", value=info["stat"]["coin"], inline=True)
+        embed.add_field(name="收藏数", value=info["stat"]["favorite"], inline=True)
+        embed.set_author(name=info["owner"]["name"], icon_url=info["owner"]["face"])
+        otto_respond = "接下来播放："+info["title"]
+        await ctx.respond(otto_respond, embed=embed)
+
+        if audio_url is None:
+            raise Exception("无法解析该视频的音频流")
+        await self.join_and_speak(voice_channel, otto_respond, str(os.getenv("SPEAK_API_URL")), ctx)
+        await self.join_and_stream_url(voice_channel, audio_url, ctx)
 
     async def _player_loop(self, guild_id: int, ctx: discord.ApplicationContext):
         queue = self.queues[guild_id]
@@ -158,7 +184,7 @@ class TTSPlayerService:
                 vc._player.after = temp_after
                 await wait_event.wait()
 
-            audio_source = discord.FFmpegPCMAudio(audio_url, executable=self.ffmpeg_path)
+            audio_source = discord.FFmpegPCMAudio(audio_url, executable=self.ffmpeg_path, before_options="-headers 'Referer: https://www.bilibili.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'")
             vc.play(audio_source, after=after_play)
             await finished.wait()
 
@@ -171,7 +197,6 @@ class TTSPlayerService:
         if self.queues[guild_id].empty() and vc.is_connected():
             self.log(guild_id, "🔇 队列播放完毕，断开语音连接")
             await vc.disconnect()
-
 
     async def _play_audio_file(self, guild_id: int, vc: discord.VoiceClient, temp_path: str, description: str, ctx: discord.ApplicationContext):
         self.log(guild_id, f"🎧 准备播放：{description}")
@@ -282,7 +307,7 @@ class TTSPlayerService:
             self.log(0, f"❌ TTS 请求异常：{e}")
             raise e
 
-    async def skip(self, guild_id: int, ctx: discord.ApplicationContext):
+    async def skip(self, guild_id: int):
         vc = self.current_voice_clients.get(guild_id)
         if vc and vc.is_playing():
             vc.stop()

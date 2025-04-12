@@ -59,7 +59,7 @@ async def skip(ctx: discord.ApplicationContext):
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
             return
 
-        await tts_service.skip(ctx.guild.id, ctx)
+        await tts_service.skip(ctx.guild.id)
         await ctx.respond("⏭️ 已尝试跳过当前播放")
     except Exception as e:
         await ctx.respond(f"❌ 跳过失败：{e}", ephemeral=True)
@@ -76,6 +76,22 @@ async def stream_url(ctx: discord.ApplicationContext, url: str):
             ctx.author.voice.channel,
             url,
             ctx
+        )
+    except Exception as e:
+        await ctx.respond(f"❌ 出现错误：{e}", ephemeral=True)
+
+@bot.slash_command(name="play_bilibili", description="解析播放bilibili视频的音频")
+async def play_bilibili(ctx: discord.ApplicationContext, bvid:str, page:int=0):
+    try:
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
+            return
+
+        await tts_service.join_and_play_bilibili(
+            ctx.author.voice.channel,
+            bvid,
+            ctx,
+            page
         )
     except Exception as e:
         await ctx.respond(f"❌ 出现错误：{e}", ephemeral=True)
