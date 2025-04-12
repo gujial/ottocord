@@ -6,7 +6,7 @@ import asyncio
 import tempfile
 import os
 import datetime
-from bilibili_api import video
+from bilibili_api import video, Credential
 from collections import defaultdict
 
 
@@ -20,6 +20,7 @@ class TTSPlayerService:
         self.queues: dict[int, asyncio.Queue] = defaultdict(asyncio.Queue)
         self.playing_tasks: dict[int, asyncio.Task] = {}
         self.current_voice_clients: dict[int, discord.VoiceClient] = {}
+        self.bilibili_credential = Credential(sessdata=os.getenv("SESSDATA"), bili_jct=os.getenv("BILI_JCT"), buvid3=os.getenv("BUVID3"), dedeuserid=os.getenv("DEDEUSERID"), ac_time_value=os.getenv("AC_TIME_VALUE"))
 
     @staticmethod
     def log(guild_id: int, message: str):
@@ -63,8 +64,8 @@ class TTSPlayerService:
         except Exception as e:
             await _send_error_to_voice_channel(f"❌ 流式播放时发生错误: {str(e)}", ctx)
 
-    async def join_and_play_bilibili(self, voice_channel: discord.VoiceChannel, bvid: str, ctx: discord.ApplicationContext, page=0):
-        v = video.Video(bvid=bvid)
+    async def join_and_play_bilibili(self, voice_channel: discord.VoiceChannel, bvid: str, ctx: discord.ApplicationContext, page:int=0):
+        v = video.Video(bvid=bvid, credential=self.bilibili_credential)
         download_url = await v.get_download_url(page)
         d = video.VideoDownloadURLDataDetecter(download_url)
         info = await v.get_info()
