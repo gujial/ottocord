@@ -66,7 +66,7 @@ class TTSPlayerService:
         except Exception as e:
             await _send_error_to_voice_channel(f"❌ 流式播放时发生错误: {str(e)}", ctx)
 
-    async def join_and_play_bilibili(self, voice_channel: discord.VoiceChannel, bvid: str, ctx: discord.ApplicationContext, page:int=1):
+    async def join_and_play_bilibili(self, voice_channel: discord.VoiceChannel, bvid: str, ctx: discord.ApplicationContext, page:int = 0):
         v = video.Video(bvid=bvid, credential=self.bilibili_credential)
         download_url = await v.get_download_url(page)
         d = video.VideoDownloadURLDataDetecter(download_url)
@@ -87,9 +87,13 @@ class TTSPlayerService:
         embed.set_footer(text=f"BV号：{bvid}")
         otto_respond = "接下来播放："+info["title"]
 
+        url = f"https://www.bilibili.com/video/{bvid}"
+        if page != 0 :
+            url = f"https://www.bilibili.com/video/{bvid}?p={page}"
+
         button = Button(
             label="📺 观看视频",
-            url=f"https://www.bilibili.com/video/{bvid}/?p={page}",
+            url=url,
             style=discord.ButtonStyle.link
         )
 
