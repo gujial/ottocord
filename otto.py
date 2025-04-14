@@ -9,6 +9,7 @@ from discord.ui import View, Select, Button
 
 from tts_player_service import TTSPlayerService
 from bilibili_api import search, sync
+from pyncm import apis
 
 dotenv.load_dotenv()
 token = str(os.getenv("TOKEN"))
@@ -121,6 +122,24 @@ async def play_bilibili(
     except Exception as e:
         await ctx.respond(f"❌ 出现错误：{e}", ephemeral=True)
 
+@bot.slash_command(name="play_netease", description="解析播放网易云音乐")
+async def play_netease(
+        ctx: discord.ApplicationContext,
+        id: Option(int, description="歌曲ID")
+):
+    try:
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
+            return
+
+        await tts_service.join_and_play_netease(
+            ctx.author.voice.channel,
+            id,
+            ctx
+        )
+    except Exception as e:
+        await ctx.respond(f"❌ 出现错误：{e}", ephemeral=True)
+
 @bot.slash_command(name="search_bilibili", description="搜索bilibili视频")
 async def search_bilibili(
         ctx: discord.ApplicationContext,
@@ -167,13 +186,13 @@ async def search_bilibili(
         view.add_item(select)
 
         if page > 1:
-            previous_page_button = Button(
+            bilibili_previous_page_button = Button(
                 label="上一页",
                 style=discord.ButtonStyle.primary,
-                custom_id=f"previous_page_{page}"
+                custom_id=f"bilibili_previous_page_{page}"
             )
 
-            async def previous_page_callback(interaction):
+            async def bilibili_previous_page_callback(interaction):
                 if interaction.user != ctx.author:
                     await interaction.response.send_message("❌ 只有发起搜索的人可以翻页！", ephemeral=True)
                     return
@@ -183,17 +202,17 @@ async def search_bilibili(
 
                 await search_bilibili(ctx, keywords, page - 1, original_message=current_message)
 
-            previous_page_button.callback = previous_page_callback
-            view.add_item(previous_page_button)
+            bilibili_previous_page_button.callback = bilibili_previous_page_callback
+            view.add_item(bilibili_previous_page_button)
 
         if page < response["numPages"]:
-            next_page_button = Button(
+            bilibili_next_page_button = Button(
                 label="下一页",
                 style=discord.ButtonStyle.primary,
-                custom_id=f"next_page_{page}"
+                custom_id=f"bilibili_next_page_{page}"
             )
 
-            async def next_page_callback(interaction):
+            async def bilibili_next_page_callback(interaction):
                 if interaction.user != ctx.author:
                     await interaction.response.send_message("❌ 只有发起搜索的人可以翻页！", ephemeral=True)
                     return
@@ -203,11 +222,11 @@ async def search_bilibili(
 
                 await search_bilibili(ctx, keywords, page + 1, original_message=current_message)
 
-            next_page_button.callback = next_page_callback
-            view.add_item(next_page_button)
+            bilibili_next_page_button.callback = bilibili_next_page_callback
+            view.add_item(bilibili_next_page_button)
 
         # 选择视频的回调
-        async def select_callback(interaction):
+        async def bilibili_select_callback(interaction):
             if interaction.user != ctx.author:
                 await interaction.response.send_message("❌ 这不是你的搜索请求!", ephemeral=True)
                 return
@@ -223,10 +242,118 @@ async def search_bilibili(
 
             await play_bilibili(ctx, bvid)
 
-        select.callback = select_callback
+        select.callback = bilibili_select_callback
 
         await ctx.respond(
             f"🔍 第 {page} 页 | 找到 {len(video_results)} 个结果，请选择:",
+            view=view,
+            ephemeral=False
+        )
+
+    except Exception as e:
+        await ctx.respond(f"❌ 出现错误：{str(e)}", ephemeral=True)
+
+@bot.slash_command(name="search_netease", description="搜索网易云音乐")
+async def search_netease(
+        ctx: discord.ApplicationContext,
+        keywords: str,
+        page: Option(int, "页数", min_value=1, default=1) = 1,
+        original_message: Option(discord.Message, "原始消息，一般指向搜索结果") = None
+):
+    page_limit = 25
+    try:
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
+            return
+
+        if original_message:
+            try:
+              await original_message.delete()
+            except:
+                pass
+
+        response = apis.cloudsearch.GetSearchResult(keyword=keywords, stype=1, limit=page_limit, offset=page_limit*(page-1))
+
+        music_results = response["result"]["songs"]
+        if not music_results:
+            await ctx.respond("🔍 没有找到相关视频", ephemeral=True)
+            return
+
+        select = Select(
+            placeholder="选择要播放的歌曲",
+            options=[
+                discord.SelectOption(
+                    label=music['name'][:50],
+                    description=f"作者: {music['ar'][0]['name']}",
+                    value=str(idx),
+                    emoji="🎵"
+                ) for idx, music in enumerate(music_results)
+            ]
+        )
+
+        view = View(timeout=60)
+        view.add_item(select)
+
+        if page > 1:
+            netease_previous_page_button = Button(
+                label="上一页",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"netease_previous_page_{page}"
+            )
+
+            async def netease_previous_page_callback(interaction):
+                if interaction.user != ctx.author:
+                    await interaction.response.send_message("❌ 只有发起搜索的人可以翻页！", ephemeral=True)
+                    return
+
+                current_message = interaction.message
+                await interaction.response.defer()
+
+                await search_netease(ctx, keywords, page - 1, original_message=current_message)
+
+            netease_previous_page_button.callback = netease_previous_page_callback
+            view.add_item(netease_previous_page_button)
+
+        if page < response["result"]["songCount"]/page_limit:
+            netease_next_page_button = Button(
+                label="下一页",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"netease_next_page_{page}"
+            )
+
+            async def netease_next_page_callback(interaction):
+                if interaction.user != ctx.author:
+                    await interaction.response.send_message("❌ 只有发起搜索的人可以翻页！", ephemeral=True)
+                    return
+
+                current_message = interaction.message
+                await interaction.response.defer()
+
+                await search_netease(ctx, keywords, page + 1, original_message=current_message)
+
+            netease_next_page_button.callback = netease_next_page_callback
+            view.add_item(netease_next_page_button)
+
+        async def netease_select_callback(interaction):
+            if interaction.user != ctx.author:
+                await interaction.response.send_message("❌ 这不是你的搜索请求!", ephemeral=True)
+                return
+
+            selected_idx = int(select.values[0])
+            selected_music = music_results[selected_idx]
+            id = selected_music['id']
+
+            await interaction.response.edit_message(
+                content=f"✅ {interaction.user.mention} 选择了: {selected_music['name']}",
+                view=None,
+            )
+
+            await play_netease(ctx, id)
+
+        select.callback = netease_select_callback
+
+        await ctx.respond(
+            f"🔍 第 {page} 页 | 找到 {len(music_results)} 个结果，请选择:",
             view=view,
             ephemeral=False
         )

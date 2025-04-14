@@ -7,6 +7,7 @@ import tempfile
 import os
 import datetime
 from bilibili_api import video, Credential
+from pyncm import apis
 from collections import defaultdict
 
 from discord.ui import View, Button
@@ -106,6 +107,35 @@ class TTSPlayerService:
             raise Exception("无法解析该视频的音频流")
         await self.join_and_speak(voice_channel, otto_respond, str(os.getenv("SPEAK_API_URL")), ctx)
         await self.join_and_stream_url(voice_channel, audio_url, ctx)
+
+    async def join_and_play_netease(self, voice_channel: discord.VoiceChannel, id: int, ctx: discord.ApplicationContext):
+        detail = apis.track.GetTrackDetail(id)
+        audio = apis.track.GetTrackAudio(id)
+        song = detail["songs"][0]
+        data = audio["data"][0]
+        title = song["name"]
+        author = song["ar"][0]["name"]
+        al_name = song["al"]["name"]
+        al_pic = song["al"]["picUrl"]
+        download_url = data["url"]
+        time_td = datetime.timedelta(milliseconds=data["time"])
+        time_str = str(time_td)
+        time = time_str.split('.')[0]
+
+        embed = discord.Embed(title=title)
+        embed.set_thumbnail(url=al_pic)
+        embed.add_field(name="专辑名", value=al_name, inline=True)
+        embed.add_field(name="时长", value=time, inline=True)
+        embed.set_author(name=author)
+        embed.set_footer(text=f"歌曲id：{id}")
+        otto_respond = "接下来播放：" + title
+
+        await ctx.respond(otto_respond, embed=embed)
+
+        if download_url is None:
+            raise Exception("无法解析该音频")
+        await self.join_and_speak(voice_channel, otto_respond, str(os.getenv("SPEAK_API_URL")), ctx)
+        await self.join_and_play_url(voice_channel, download_url, ctx)
 
     async def _player_loop(self, guild_id: int, ctx: discord.ApplicationContext):
         queue = self.queues[guild_id]

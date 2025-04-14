@@ -3,3 +3,4 @@ audioop-lts
 dotenv
 PyNaCl
 bilibili-api-python
+pyncm
