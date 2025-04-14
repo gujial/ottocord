@@ -99,3 +99,8 @@ docker run -d --name [容器名] \
   gujial114514/ottocord:latest
 ```
 环境变量与上一种部署方法中的相同
+
+## 使用到的开源库
+- [bilibili-api](https://github.com/nemo2011/bilibili-api)
+- [pyncm](https://github.com/mos9527/pyncm)
+- [pycord](https://github.com/Pycord-Development/pycord/)
