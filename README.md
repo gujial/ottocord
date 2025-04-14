@@ -61,7 +61,7 @@ git clone https://github.com/gujial/ottocord.git
 ```
 
 #### 部署 ottoTTS_server
-参考[ottoTTS_server](https://github.com/gujial/ottoTTS_server)
+参考[ottoTTS_server](https://github.com/gujial/ottoTTS_server?tab=readme-ov-file#%E9%83%A8%E7%BD%B2)
 
 #### 创建 .env 文件
 文件内容如下
