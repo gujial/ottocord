@@ -1,0 +1,27 @@
+services:
+  ottocord:
+    image: gujial114514/ottocord:latest
+    container_name: ottocord
+    restart: unless-stopped
+    environment:
+      # Discord Bot Token
+      - TOKEN=${TOKEN}
+      # TTS API URL
+      - SPEAK_API_URL=http://ottoTTS_server:8080
+      # Bilibili 凭据 (可选)
+      - SESSDATA=${SESSDATA:-}
+      - BILI_JCT=${BILI_JCT:-}
+      - BUVID3=${BUVID3:-}
+      - DEDEUSERID=${DEDEUSERID:-}
+      - AC_TIME_VALUE=${AC_TIME_VALUE:-}
+    depends_on:
+      - ottoTTS_server
+
+  ottoTTS_server:
+    image: gujial114514/ottoTTS_server:latest
+    container_name: ottoTTS_server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - TZ=Asia/Shanghai
