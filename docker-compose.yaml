@@ -18,7 +18,7 @@ services:
       - ottoTTS_server
 
   ottoTTS_server:
-    image: gujial114514/ottoTTS_server:latest
+    image: gujial114514/ottotts_server:latest
     container_name: ottoTTS_server
     restart: unless-stopped
     ports:
