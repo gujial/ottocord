@@ -7,7 +7,7 @@ services:
       # Discord Bot Token
       - TOKEN=${TOKEN}
       # TTS API URL
-      - SPEAK_API_URL=http://ottoTTS_server:8080
+      - SPEAK_API_URL=http://ottoTTS_server:8080/speak
       # Bilibili 凭据 (可选)
       - SESSDATA=${SESSDATA:-}
       - BILI_JCT=${BILI_JCT:-}
