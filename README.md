@@ -1,7 +1,7 @@
 # ottocord
 [![Discord Bot Invite](https://img.shields.io/badge/Invite_My_Bot_to_Your_Server-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/oauth2/authorize?client_id=1358306377159675940&permissions=2150648320&integration_type=0&scope=bot+applications.commands)
 </br>棍哥点歌机器人
-> 机器人现在部署在宿舍的服务器中，每天晚上宿舍断电就下线了，建议自行部署
+
 ## 功能
 - [x] bilibili 视频搜索和播放（只播放音频）
 - [x] 网易云音乐搜索和播放
