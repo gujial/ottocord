@@ -8,6 +8,8 @@ services:
       - TOKEN=${TOKEN}
       # TTS API URL
       - SPEAK_API_URL=http://ottoTTS_server:8080/speak
+      # Musix API URL
+      - MUSIX_API_URL=http://musix-api:8000/api/v1
       # Bilibili 凭据 (可选)
       - SESSDATA=${SESSDATA:-}
       - BILI_JCT=${BILI_JCT:-}
@@ -16,6 +18,9 @@ services:
       - AC_TIME_VALUE=${AC_TIME_VALUE:-}
     depends_on:
       - ottoTTS_server
+      - musix-api
+    networks:
+      - ottocord-network
 
   ottoTTS_server:
     image: gujial114514/ottotts-server:latest
@@ -25,3 +30,32 @@ services:
       - "8080:8080"
     environment:
       - TZ=Asia/Shanghai
+    networks:
+      - ottocord-network
+
+  musix-api:
+    image: gujial114514/musix-api:latest
+    container_name: musix-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - NETEASE_MUSIC_U=${NETEASE_MUSIC_U:-}
+      - BILIBILI_SESSDATA=${BILIBILI_SESSDATA:-}
+      - BILIBILI_BILI_JCT=${BILIBILI_BILI_JCT:-}
+      - BILIBILI_BUVID3=${BILIBILI_BUVID3:-}
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - ottocord-network
+
+networks:
+  ottocord-network:
+    driver: bridge
