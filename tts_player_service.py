@@ -6,8 +6,7 @@ import asyncio
 import tempfile
 import os
 import datetime
-from bilibili_api import video, Credential
-from pyncm import apis
+import traceback
 from collections import defaultdict
 
 from discord.ui import View, Button
@@ -23,7 +22,7 @@ class TTSPlayerService:
         self.queues: dict[int, asyncio.Queue] = defaultdict(asyncio.Queue)
         self.playing_tasks: dict[int, asyncio.Task] = {}
         self.current_voice_clients: dict[int, discord.VoiceClient] = {}
-        self.bilibili_credential = Credential(sessdata=os.getenv("SESSDATA"), bili_jct=os.getenv("BILI_JCT"), buvid3=os.getenv("BUVID3"), dedeuserid=os.getenv("DEDEUSERID"), ac_time_value=os.getenv("AC_TIME_VALUE"))
+        self.musix_api_url = os.getenv("MUSIX_API_URL")
 
     @staticmethod
     def log(guild_id: int, message: str):
@@ -68,14 +67,25 @@ class TTSPlayerService:
             await _send_error_to_voice_channel(f"❌ 流式播放时发生错误: {str(e)}", ctx)
 
     async def join_and_play_bilibili(self, voice_channel: discord.VoiceChannel, bvid: str, ctx: discord.ApplicationContext, page:int = 0):
-        v = video.Video(bvid=bvid, credential=self.bilibili_credential)
-        download_url = await v.get_download_url(page)
-        d = video.VideoDownloadURLDataDetecter(download_url)
-        info = await v.get_info()
-        a = d.detect_best_streams()
-        audio_url = a[1].url
-
-        embed = discord.Embed(title=info["title"], description=info["desc"])
+        # 使用musix API获取视频信息
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{self.musix_api_url}/bilibili/videos/{bvid}", params={"page": page}) as resp:
+                if resp.status != 200:
+                    raise Exception(f"获取视频信息失败: HTTP {resp.status}")
+                result = await resp.json()
+                
+                # 调试：打印完整响应
+                self.log(voice_channel.guild.id, f"📋 API响应: {result}")
+                
+                # 检查API响应格式
+                if "data" not in result:
+                    raise Exception(f"API响应格式错误，缺少data字段: {result}")
+                
+                info = result.get("data", {})
+        
+        audio_url = info.get("audio_url")
+        
+        embed = discord.Embed(title=info["title"], description=info.get("desc", ""))
         embed.set_thumbnail(url=info["pic"])
         embed.add_field(name="发布时间", value=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(info["pubdate"])), inline=False)
         embed.add_field(name="播放量", value=info["stat"]["view"], inline=True)
@@ -109,18 +119,25 @@ class TTSPlayerService:
         await self.join_and_stream_url(voice_channel, audio_url, ctx)
 
     async def join_and_play_netease(self, voice_channel: discord.VoiceChannel, id: int, ctx: discord.ApplicationContext):
-        detail = apis.track.GetTrackDetail(id)
-        audio = apis.track.GetTrackAudio(id)
-        song = detail["songs"][0]
-        data = audio["data"][0]
-        title = song["name"]
-        author = song["ar"][0]["name"]
-        al_name = song["al"]["name"]
-        al_pic = song["al"]["picUrl"]
-        download_url = data["url"]
-        time_td = datetime.timedelta(milliseconds=data["time"])
-        time_str = str(time_td)
-        time = time_str.split('.')[0]
+        # 使用musix API获取歌曲信息
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{self.musix_api_url}/netease/songs/{id}") as resp:
+                if resp.status != 200:
+                    raise Exception(f"获取歌曲信息失败: HTTP {resp.status}")
+                result = await resp.json()
+                
+                # 检查API响应格式
+                if "data" not in result:
+                    raise Exception(f"API响应格式错误: {result}")
+                
+                info = result.get("data", {})
+        
+        title = info["title"]
+        author = info["author"]
+        al_name = info["album_name"]
+        al_pic = info["album_pic"]
+        download_url = info["download_url"]
+        time = info["duration"]
 
         embed = discord.Embed(title=title)
         embed.set_thumbnail(url=al_pic)
@@ -174,7 +191,7 @@ class TTSPlayerService:
             os.remove(temp_path)
             return
 
-        await self._play_audio_file(guild_id, vc, temp_path, message, ctx)
+        await self._play_audio_file(guild_id, vc, temp_path, message, ctx)  # type: ignore
 
     async def _play_url(self, voice_channel: discord.VoiceChannel, audio_url: str, ctx: discord.ApplicationContext):
         guild_id = voice_channel.guild.id
@@ -205,7 +222,7 @@ class TTSPlayerService:
             os.remove(temp_path)
             return
 
-        await self._play_audio_file(guild_id, vc, temp_path, f"URL: {audio_url}", ctx)
+        await self._play_audio_file(guild_id, vc, temp_path, f"URL: {audio_url}", ctx)  # type: ignore
 
     async def _stream_url(self, voice_channel: discord.VoiceChannel, audio_url: str, ctx: discord.ApplicationContext):
         guild_id = voice_channel.guild.id
@@ -226,13 +243,13 @@ class TTSPlayerService:
             self.bot.loop.call_soon_threadsafe(finished.set)
 
         try:
-            self.current_voice_clients[guild_id] = vc
+            self.current_voice_clients[guild_id] = vc  # type: ignore
 
-            if vc.is_playing():
+            if vc.is_playing():  # type: ignore
                 self.log(guild_id, "⏳ 等待当前播放完成")
                 wait_event = asyncio.Event()
-                def temp_after(): wait_event.set()
-                vc._player.after = temp_after
+                def temp_after(error=None): wait_event.set()  # type: ignore
+                vc._player.after = temp_after  # type: ignore
                 await wait_event.wait()
 
             audio_source = discord.FFmpegPCMAudio(audio_url, executable=self.ffmpeg_path, before_options="-headers 'Referer: https://www.bilibili.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'")
@@ -240,14 +257,16 @@ class TTSPlayerService:
             await finished.wait()
 
         except Exception as e:
-            self.log(guild_id, f"❌ 流式播放异常：{e}")
-            await _send_error_to_voice_channel(f"❌ 流式播放异常：{e}", ctx)
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            self.log(guild_id, f"❌ 流式播放异常：{error_msg}")
+            self.log(guild_id, f"❌ 异常详情：{traceback.format_exc()}")
+            await _send_error_to_voice_channel(f"❌ 流式播放异常：{error_msg}", ctx)
         finally:
             self.current_voice_clients.pop(guild_id, None)
 
         if self.queues[guild_id].empty() and vc.is_connected():
             self.log(guild_id, "🔇 队列播放完毕，断开语音连接")
-            await vc.disconnect()
+            await vc.disconnect(force=True)
 
     async def _play_audio_file(self, guild_id: int, vc: discord.VoiceClient, temp_path: str, description: str, ctx: discord.ApplicationContext):
         self.log(guild_id, f"🎧 准备播放：{description}")
@@ -255,7 +274,8 @@ class TTSPlayerService:
 
         def after_play(error):
             if error:
-                self.log(guild_id, f"❌ 播放回调报错：{error}")
+                error_msg = f"{type(error).__name__}: {str(error)}" if error else "Unknown error"
+                self.log(guild_id, f"❌ 播放回调报错：{error_msg}")
             else:
                 self.log(guild_id, "🎵 播放完成")
 
@@ -263,26 +283,28 @@ class TTSPlayerService:
             self.bot.loop.call_soon_threadsafe(finished.set)
 
         try:
-            self.current_voice_clients[guild_id] = vc
+            self.current_voice_clients[guild_id] = vc  # type: ignore
 
             # 如果正在播放，等待其完成
-            if vc.is_playing():
+            if vc.is_playing():  # type: ignore
                 self.log(guild_id, f"⏳ 正在等待当前音频播放结束...")
                 wait_event = asyncio.Event()
 
-                def temp_after():
+                def temp_after(error=None):  # type: ignore
                     wait_event.set()
 
-                vc._player.after = temp_after
+                vc._player.after = temp_after  # type: ignore
                 await wait_event.wait()
 
             audio_source = discord.FFmpegPCMAudio(temp_path, executable=self.ffmpeg_path)
-            vc.play(audio_source, after=after_play)
+            vc.play(audio_source, after=after_play)  # type: ignore
             await finished.wait()
 
         except Exception as e:
-            self.log(guild_id, f"❌ 播放异常：{e}")
-            await _send_error_to_voice_channel(f"❌ 播放异常：{e}", ctx)
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            self.log(guild_id, f"❌ 播放异常：{error_msg}")
+            self.log(guild_id, f"❌ 异常详情：{traceback.format_exc()}")
+            await _send_error_to_voice_channel(f"❌ 播放异常：{error_msg}", ctx)
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
@@ -290,10 +312,10 @@ class TTSPlayerService:
 
         if self.queues[guild_id].empty() and vc.is_connected():
             self.log(guild_id, "🔇 队列播放完毕，断开语音连接")
-            await vc.disconnect()
+            await vc.disconnect(force=True)
 
     async def _prepare_voice_client(self, voice_channel: discord.VoiceChannel, guild_id: int):
-        vc: discord.VoiceClient = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
+        vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)  # type: ignore
 
         if vc and vc.is_connected():
             if vc.channel.id == voice_channel.id:
@@ -306,7 +328,7 @@ class TTSPlayerService:
         return await self._safe_connect(voice_channel, guild_id)
 
     async def _safe_connect(self, voice_channel: discord.VoiceChannel, guild_id: int, retries: int = 3, delay: float = 2.0):
-        existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
+        existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)  # type: ignore
 
         # ✅ 如果已连接到目标频道，直接复用
         if existing_vc and existing_vc.is_connected() and existing_vc.channel.id == voice_channel.id:
@@ -314,7 +336,7 @@ class TTSPlayerService:
             return existing_vc
 
         # ✅ 如果连接在其他频道，先断开
-        if existing_vc and existing_vc.is_connected():
+        if existing_vc and existing_vc.is_connected():  # type: ignore
             self.log(guild_id, f"🔁 正在断开已有频道：{existing_vc.channel}")
             await existing_vc.disconnect(force=True)
 
@@ -331,7 +353,7 @@ class TTSPlayerService:
             except discord.ClientException as e:
                 msg = str(e)
                 self.log(guild_id, f"⚠️ 第 {attempt} 次连接失败：{msg}")
-                existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)
+                existing_vc = discord.utils.get(self.bot.voice_clients, guild=voice_channel.guild)  # type: ignore
                 if existing_vc:
                     self.log(guild_id, f"⚠️ 检测到连接残留，尝试强制断开")
                     try:

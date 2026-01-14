@@ -1,19 +1,30 @@
 import os
 import re
+from typing import Optional
 
 import discord
 import dotenv
+import aiohttp
 from discord import Option
 from discord.ext import commands
 from discord.ui import View, Select, Button
 
 from tts_player_service import TTSPlayerService
-from bilibili_api import search, sync
-from pyncm import apis
 
 dotenv.load_dotenv()
 token = str(os.getenv("TOKEN"))
 speak_api_url = str(os.getenv("SPEAK_API_URL"))
+musix_api_url = str(os.getenv("MUSIX_API_URL"))
+
+# 尝试加载 Opus 库
+if not discord.opus.is_loaded():
+    try:
+        discord.opus.load_opus('libopus.so.0')
+    except Exception as e:
+        print(f"⚠️  无法加载 Opus 库: {e}")
+        print("💡 请安装 libopus: sudo apt install libopus0  # Ubuntu/Debian")
+        print("💡 或: sudo dnf install opus              # Fedora/RHEL")
+        print("💡 或: sudo pacman -S opus                # Arch Linux")
 
 intents = discord.Intents.default()
 intents.voice_states = True
@@ -21,6 +32,9 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 tts_service = TTSPlayerService(bot)
+
+# 跟踪每个用户的最后搜索消息 (key: user_id, value: message)
+last_search_messages = {}
 
 def clean_html_tags(text):
     """移除所有HTML标签"""
@@ -35,16 +49,16 @@ async def on_ready():
 @bot.slash_command(name="say", description="播放语音（通过 TTS）")
 async def say(
         ctx: discord.ApplicationContext,
-        message: Option(str, description="需要棍哥朗诵的内容")
+        message: Option(str, description="需要棍哥朗诵的内容")  # type: ignore
 ):
     try:
-        if not ctx.author.voice or not ctx.author.voice.channel:
+        if not ctx.author.voice or not ctx.author.voice.channel:  # type: ignore
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
             return
 
         await ctx.respond(f"{message}")
         await tts_service.join_and_speak(
-            ctx.author.voice.channel,
+            ctx.author.voice.channel,  # type: ignore
             message,
             speak_api_url,
             ctx
@@ -55,16 +69,16 @@ async def say(
 @bot.slash_command(name="play_url", description="播放在线音频（mp3/wav 等）")
 async def play_url(
         ctx: discord.ApplicationContext,
-        url: Option(str, "音频文件url")
+        url: Option(str, "音频文件url")  # type: ignore
 ):
     try:
-        if not ctx.author.voice or not ctx.author.voice.channel:
+        if not ctx.author.voice or not ctx.author.voice.channel:  # type: ignore
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
             return
 
         await ctx.respond(f"🎧 准备播放音频：{url}")
         await tts_service.join_and_play_url(
-            ctx.author.voice.channel,
+            ctx.author.voice.channel,  # type: ignore
             url,
             ctx
         )
@@ -74,11 +88,11 @@ async def play_url(
 @bot.slash_command(name="skip", description="跳过当前播放的音频")
 async def skip(ctx: discord.ApplicationContext):
     try:
-        if not ctx.author.voice or not ctx.author.voice.channel:
+        if not ctx.author.voice or not ctx.author.voice.channel:  # type: ignore
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
             return
 
-        await tts_service.skip(ctx.guild.id)
+        await tts_service.skip(ctx.guild.id if ctx.guild else 0)  # type: ignore
         await ctx.respond("⏭️ 已尝试跳过当前播放")
     except Exception as e:
         await ctx.respond(f"❌ 跳过失败：{e}", ephemeral=True)
@@ -86,16 +100,16 @@ async def skip(ctx: discord.ApplicationContext):
 @bot.slash_command(name="stream_url", description="播放流式音频（直播/广播）")
 async def stream_url(
         ctx: discord.ApplicationContext,
-        url: Option(str, "流式音频url")
+        url: Option(str, "流式音频url")  # type: ignore
 ):
     try:
-        if not ctx.author.voice or not ctx.author.voice.channel:
+        if not ctx.author.voice or not ctx.author.voice.channel:  # type: ignore
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
             return
 
         await ctx.respond(f"📡 正在流式播放：{url}")
         await tts_service.join_and_stream_url(
-            ctx.author.voice.channel,
+            ctx.author.voice.channel,  # type: ignore
             url,
             ctx
         )
@@ -105,16 +119,16 @@ async def stream_url(
 @bot.slash_command(name="play_bilibili", description="解析播放bilibili视频的音频")
 async def play_bilibili(
         ctx: discord.ApplicationContext,
-        bvid: Option(str, description="BV号"),
-        page: Option(int, description="分P号") = 0
+        bvid: Option(str, description="BV号"),  # type: ignore
+        page: Option(int, description="分P号") = 0  # type: ignore
 ):
     try:
-        if not ctx.author.voice or not ctx.author.voice.channel:
+        if not ctx.author.voice or not ctx.author.voice.channel:  # type: ignore
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
             return
 
         await tts_service.join_and_play_bilibili(
-            ctx.author.voice.channel,
+            ctx.author.voice.channel,  # type: ignore
             bvid,
             ctx,
             page
@@ -125,15 +139,15 @@ async def play_bilibili(
 @bot.slash_command(name="play_netease", description="解析播放网易云音乐")
 async def play_netease(
         ctx: discord.ApplicationContext,
-        id: Option(int, description="歌曲ID")
+        id: Option(int, description="歌曲ID")  # type: ignore
 ):
     try:
-        if not ctx.author.voice or not ctx.author.voice.channel:
+        if not ctx.author.voice or not ctx.author.voice.channel:  # type: ignore
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
             return
 
         await tts_service.join_and_play_netease(
-            ctx.author.voice.channel,
+            ctx.author.voice.channel,  # type: ignore
             id,
             ctx
         )
@@ -144,13 +158,22 @@ async def play_netease(
 async def search_bilibili(
         ctx: discord.ApplicationContext,
         keywords: str,
-        page: Option(int, "页码", min_value=1, default=1) = 1,
-        original_message: Option(discord.Message, "原始消息，一般指向搜索结果") = None
+        page: Option(int, "页码", min_value=1, default=1) = 1,  # type: ignore
+        original_message: Optional[discord.Message] = None  # type: ignore
 ):
     try:
-        if not ctx.author.voice or not ctx.author.voice.channel:
+        if not ctx.author.voice or not ctx.author.voice.channel:  # type: ignore
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
             return
+
+        # 删除用户的上一次搜索消息
+        user_id = ctx.author.id
+        if user_id in last_search_messages:
+            try:
+                await last_search_messages[user_id].delete()
+            except:
+                pass
+            del last_search_messages[user_id]
 
         if original_message:
             try:
@@ -158,13 +181,23 @@ async def search_bilibili(
             except:
                 pass
 
-        response = sync(search.search(keywords, page=page))
-
-        video_results = []
-        for result in response['result']:
-            if result['result_type'] == 'video':
-                video_results = result['data']
-                break
+        # 使用musix API搜索
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{musix_api_url}/bilibili/search", params={"keywords": keywords, "page": page}) as resp:
+                if resp.status != 200:
+                    await ctx.respond(f"❌ 搜索失败: HTTP {resp.status}", ephemeral=True)
+                    return
+                result = await resp.json()
+                
+                # 检查API响应格式
+                if "data" not in result:
+                    await ctx.respond(f"❌ API响应格式错误: {result}", ephemeral=True)
+                    return
+                
+                response_data = result.get("data", {})
+                video_results = response_data.get("items", [])
+                pagination = response_data.get("pagination", {})
+                total_pages = pagination.get("total_pages", 1)
 
         if not video_results:
             await ctx.respond("🔍 没有找到相关视频", ephemeral=True)
@@ -205,7 +238,7 @@ async def search_bilibili(
             bilibili_previous_page_button.callback = bilibili_previous_page_callback
             view.add_item(bilibili_previous_page_button)
 
-        if page < response["numPages"]:
+        if page < total_pages:
             bilibili_next_page_button = Button(
                 label="下一页",
                 style=discord.ButtonStyle.primary,
@@ -244,11 +277,17 @@ async def search_bilibili(
 
         select.callback = bilibili_select_callback
 
-        await ctx.respond(
+        response_msg = await ctx.respond(
             f"🔍 第 {page} 页 | 找到 {len(video_results)} 个结果，请选择:",
             view=view,
             ephemeral=False
         )
+        
+        # 保存这次搜索的消息
+        if hasattr(response_msg, 'message'):
+            last_search_messages[user_id] = response_msg.message
+        elif isinstance(response_msg, discord.Message):
+            last_search_messages[user_id] = response_msg
 
     except Exception as e:
         await ctx.respond(f"❌ 出现错误：{str(e)}", ephemeral=True)
@@ -257,14 +296,23 @@ async def search_bilibili(
 async def search_netease(
         ctx: discord.ApplicationContext,
         keywords: str,
-        page: Option(int, "页数", min_value=1, default=1) = 1,
-        original_message: Option(discord.Message, "原始消息，一般指向搜索结果") = None
+        page: Option(int, "页数", min_value=1, default=1) = 1,  # type: ignore
+        original_message: Optional[discord.Message] = None  # type: ignore
 ):
     page_limit = 25
     try:
-        if not ctx.author.voice or not ctx.author.voice.channel:
+        if not ctx.author.voice or not ctx.author.voice.channel:  # type: ignore
             await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
             return
+
+        # 删除用户的上一次搜索消息
+        user_id = ctx.author.id
+        if user_id in last_search_messages:
+            try:
+                await last_search_messages[user_id].delete()
+            except:
+                pass
+            del last_search_messages[user_id]
 
         if original_message:
             try:
@@ -272,23 +320,51 @@ async def search_netease(
             except:
                 pass
 
-        response = apis.cloudsearch.GetSearchResult(keyword=keywords, stype=1, limit=page_limit, offset=page_limit*(page-1))
+        # 使用musix API搜索
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{musix_api_url}/netease/search", params={"keywords": keywords, "page": page, "limit": page_limit}) as resp:
+                if resp.status != 200:
+                    await ctx.respond(f"❌ 搜索失败: HTTP {resp.status}", ephemeral=True)
+                    return
+                result = await resp.json()
+                
+                # 检查API响应格式
+                if "data" not in result:
+                    await ctx.respond(f"❌ API响应格式错误: {result}", ephemeral=True)
+                    return
+                
+                response_data = result.get("data", {})
+                music_results = response_data.get("items", [])
+                pagination = response_data.get("pagination", {})
+                total_count = pagination.get("total_count", 0)
+                total_pages = pagination.get("total_pages", 1)
 
-        music_results = response["result"]["songs"]
         if not music_results:
-            await ctx.respond("🔍 没有找到相关视频", ephemeral=True)
+            await ctx.respond("🔍 没有找到相关歌曲", ephemeral=True)
             return
+
+        # 构建选项列表，安全地处理数据格式
+        options = []
+        for idx, music in enumerate(music_results):
+            name = music.get('name', '未知歌曲')[:50]
+            
+            # 安全地获取艺术家名称
+            artists = music.get('artists', [])
+            if artists and len(artists) > 0:
+                author = artists[0].get('name', '未知')
+            else:
+                author = '未知'
+            
+            options.append(discord.SelectOption(
+                label=name,
+                description=f"作者: {author}",
+                value=str(idx),
+                emoji="🎵"
+            ))
 
         select = Select(
             placeholder="选择要播放的歌曲",
-            options=[
-                discord.SelectOption(
-                    label=music['name'][:50],
-                    description=f"作者: {music['ar'][0]['name']}",
-                    value=str(idx),
-                    emoji="🎵"
-                ) for idx, music in enumerate(music_results)
-            ]
+            options=options
         )
 
         view = View(timeout=60)
@@ -314,7 +390,7 @@ async def search_netease(
             netease_previous_page_button.callback = netease_previous_page_callback
             view.add_item(netease_previous_page_button)
 
-        if page < response["result"]["songCount"]/page_limit:
+        if page < total_pages:
             netease_next_page_button = Button(
                 label="下一页",
                 style=discord.ButtonStyle.primary,
@@ -352,11 +428,17 @@ async def search_netease(
 
         select.callback = netease_select_callback
 
-        await ctx.respond(
+        response_msg = await ctx.respond(
             f"🔍 第 {page} 页 | 找到 {len(music_results)} 个结果，请选择:",
             view=view,
             ephemeral=False
         )
+        
+        # 保存这次搜索的消息
+        if hasattr(response_msg, 'message'):
+            last_search_messages[user_id] = response_msg.message
+        elif isinstance(response_msg, discord.Message):
+            last_search_messages[user_id] = response_msg
 
     except Exception as e:
         await ctx.respond(f"❌ 出现错误：{str(e)}", ephemeral=True)
