@@ -443,4 +443,167 @@ async def search_netease(
     except Exception as e:
         await ctx.respond(f"❌ 出现错误：{str(e)}", ephemeral=True)
 
+@bot.slash_command(name="get_bilibili_popular", description="获取bilibili热门视频")
+async def get_bilibili_popular(
+        ctx: discord.ApplicationContext,
+        tag: Option(str, "标签名称（如编程、音乐等）", required=False) = None,  # type: ignore
+        page: Option(int, "页码", min_value=1, default=1) = 1,  # type: ignore
+        page_size: Option(int, "每页数量（最大50）", min_value=1, max_value=50, default=20) = 20,  # type: ignore
+        days: Option(int, "时间范围（天数）：1=当天，7=本周，30=本月", choices=[1, 7, 30], required=False) = None,  # type: ignore
+        original_message: Optional[discord.Message] = None  # type: ignore
+):
+    try:
+        if not ctx.author.voice or not ctx.author.voice.channel:  # type: ignore
+            await ctx.respond("❗ 请先加入一个语音频道。", ephemeral=True)
+            return
+
+        # 删除用户的上一次搜索消息
+        user_id = ctx.author.id
+        if user_id in last_search_messages:
+            try:
+                await last_search_messages[user_id].delete()
+            except:
+                pass
+            del last_search_messages[user_id]
+
+        if original_message:
+            try:
+                await original_message.delete()
+            except:
+                pass
+
+        # 构建请求参数
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        if tag:
+            params["tag"] = tag
+        if days:
+            params["days"] = days
+
+        # 使用musix API获取热门视频
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{musix_api_url}/bilibili/popular", params=params) as resp:
+                if resp.status != 200:
+                    await ctx.respond(f"❌ 获取热门视频失败: HTTP {resp.status}", ephemeral=True)
+                    return
+                result = await resp.json()
+                
+                # 检查API响应格式
+                if "data" not in result:
+                    await ctx.respond(f"❌ API响应格式错误: {result}", ephemeral=True)
+                    return
+                
+                response_data = result.get("data", {})
+                video_results = response_data.get("items", [])
+                pagination = response_data.get("pagination", {})
+                total_pages = pagination.get("total_pages", 1)
+
+        if not video_results:
+            await ctx.respond("🔍 没有找到热门视频", ephemeral=True)
+            return
+
+        # 构建标题信息
+        title_parts = ["🔥 热门视频"]
+        if tag:
+            title_parts.append(f"「{tag}」")
+        if days == 1:
+            title_parts.append("| 当天")
+        elif days == 7:
+            title_parts.append("| 本周")
+        elif days == 30:
+            title_parts.append("| 本月")
+        title = " ".join(title_parts)
+
+        select = Select(
+            placeholder="选择要播放的视频",
+            options=[
+                discord.SelectOption(
+                    label=clean_html_tags(video['title'])[:50],
+                    description=f"UP: {video['author']} | 播放: {video['play']} | 时长: {video['duration']}",
+                    value=str(idx),
+                    emoji="🔥"
+                ) for idx, video in enumerate(video_results)
+            ]
+        )
+
+        view = View(timeout=60)
+        view.add_item(select)
+
+        # 添加翻页按钮
+        if page > 1:
+            popular_previous_page_button = Button(
+                label="上一页",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"popular_previous_page_{page}"
+            )
+
+            async def popular_previous_page_callback(interaction):
+                if interaction.user != ctx.author:
+                    await interaction.response.send_message("❌ 只有发起搜索的人可以翻页！", ephemeral=True)
+                    return
+
+                current_message = interaction.message
+                await interaction.response.defer()
+
+                await get_bilibili_popular(ctx, tag, page - 1, page_size, days, original_message=current_message)
+
+            popular_previous_page_button.callback = popular_previous_page_callback
+            view.add_item(popular_previous_page_button)
+
+        if page < total_pages:
+            popular_next_page_button = Button(
+                label="下一页",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"popular_next_page_{page}"
+            )
+
+            async def popular_next_page_callback(interaction):
+                if interaction.user != ctx.author:
+                    await interaction.response.send_message("❌ 只有发起搜索的人可以翻页！", ephemeral=True)
+                    return
+
+                current_message = interaction.message
+                await interaction.response.defer()
+
+                await get_bilibili_popular(ctx, tag, page + 1, page_size, days, original_message=current_message)
+
+            popular_next_page_button.callback = popular_next_page_callback
+            view.add_item(popular_next_page_button)
+
+        # 选择视频的回调
+        async def popular_select_callback(interaction):
+            if interaction.user != ctx.author:
+                await interaction.response.send_message("❌ 这不是你的搜索请求!", ephemeral=True)
+                return
+
+            selected_idx = int(select.values[0])
+            selected_video = video_results[selected_idx]
+            bvid = selected_video['bvid']
+
+            await interaction.response.edit_message(
+                content=f"✅ {interaction.user.mention} 选择了: {clean_html_tags(selected_video['title'])}",
+                view=None,
+            )
+
+            await play_bilibili(ctx, bvid)
+
+        select.callback = popular_select_callback
+
+        response_msg = await ctx.respond(
+            f"{title} | 第 {page} 页 | 找到 {len(video_results)} 个结果，请选择:",
+            view=view,
+            ephemeral=False
+        )
+        
+        # 保存这次搜索的消息
+        if hasattr(response_msg, 'message'):
+            last_search_messages[user_id] = response_msg.message
+        elif isinstance(response_msg, discord.Message):
+            last_search_messages[user_id] = response_msg
+
+    except Exception as e:
+        await ctx.respond(f"❌ 出现错误：{str(e)}", ephemeral=True)
+
 bot.run(token)
