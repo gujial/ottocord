@@ -34,7 +34,7 @@ services:
       - ottocord-network
 
   musix-api:
-    image: gujial114514/musix-api:latest
+    image: gujial114514/musix:latest
     container_name: musix-api
     restart: unless-stopped
     ports:
